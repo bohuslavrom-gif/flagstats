@@ -2498,19 +2498,33 @@ function saveMatchToSheets(onDone) {
     if (onDone) onDone();
   };
 
-  const script = document.createElement('script');
-  script.id = 'jsonp-' + cbName;
-  script.src = `${url}?action=save&callback=${cbName}&data=${encoded}`;
+function saveMatchToSheets(onDone) {
+  const url = getScriptUrl();
+  if (!url) {
+    showToast('⚠ Nastav Apps Script URL v nastavení', 'red');
+    if (onDone) onDone();
+    return;
+  }
+
+  const payload = buildMatchPayload();
+  const encoded = encodeURIComponent(JSON.stringify(payload));
+  const fullUrl = `${url}?action=save&data=${encoded}`;
+
   console.log('FF Stats — posílám data na:', url);
   console.log('FF Stats — payload:', payload);
   console.log('FF Stats — encoded délka:', encoded.length, 'znaků');
-  script.onerror = () => {
-    clearTimeout(timeout);
-    delete window[cbName];
-    showToast('Chyba připojení', 'red');
-    if (onDone) onDone();
-  };
-  document.body.appendChild(script);
+
+  // no-cors fetch — nepřečteme odpověď ale data se uloží
+  fetch(fullUrl, { method: 'GET', mode: 'no-cors' })
+    .then(() => {
+      showToast('Zápas uložen do Sheets ✓');
+      if (onDone) onDone();
+    })
+    .catch(err => {
+      console.error('Sheets error:', err);
+      showToast('Chyba připojení ke Sheets', 'red');
+      if (onDone) onDone();
+    });
 }
 
 // ═══════════════ TOAST ═══════════════

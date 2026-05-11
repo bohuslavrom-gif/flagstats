@@ -1,12 +1,13 @@
 <!DOCTYPE html>
 <html lang="cs">
 <head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="FF Stats">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#ffffff"><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#ffffff">
 <title>Flag Football Stats</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
@@ -1038,9 +1039,25 @@ const state = {
 };
 
 const PENALTIES = [
-  'Offside', 'Holding', 'False Start', 'Pass Interference',
-  'Roughing the Passer', 'Illegal Block', 'Delay of Game',
-  'Unnecessary Roughness', 'Clipping', 'Face Mask'
+  // Dead Ball (opakuje se down)
+  'False Start',
+  'Delay of Game',
+  'Offside',
+  // Live Ball — útok
+  'Pass Interference (OFF)',
+  'Holding',
+  'Illegal Block',
+  'Flag Guarding',
+  'Illegal Forward Pass',
+  // Live Ball — obrana (auto 1st down)
+  'Pass Interference (DEF)',
+  'Roughing the Passer',
+  'Face Mask',
+  'Unnecessary Roughness',
+  'Illegal Contact',
+  'Illegal Blitz',
+  // Ostatní
+  'Unsportsmanlike Conduct',
 ];
 
 function useTimeout(team, idx) {
@@ -1109,12 +1126,14 @@ function yardLabel(yd) {
 
 function advanceBall(yards) {
   state.currentDrive.plays++;
+  const prevBall = state.ball;
   state.ball = Math.max(0, Math.min(50, state.ball + yards));
   if (state.ball >= 50) { touchdownScored(); return false; }
-  if (state.ball >= 25 && state.down === 1 && yards > 0) {
+
+  // 1st Down získán — míč přešel půlku (25yd) nebo dosáhl firstDownAt
+  if (state.ball >= state.firstDownAt) {
     state.down = 1;
-  } else if (state.ball >= state.firstDownAt && state.down > 1) {
-    state.down = 1;
+    state.firstDownAt = 25; // fixní — vždy půlka
   } else {
     state.down++;
     if (state.down > 4) flipPossession('downs');
@@ -1136,12 +1155,19 @@ function closeDrive(result) {
 function flipPossession(reason) {
   closeDrive(reason || 'turnover');
   const newPoss = state.possession === 'A' ? 'B' : 'A';
-  state.ball = 50 - state.ball;
   state.possession = newPoss;
+  state.ball = 5;
   state.down = 1;
   state.firstDownAt = 25;
   state.currentDrive = { team: newPoss, plays: 0 };
-  selectTeam(newPoss);
+  // Aktualizuj UI týmu ale neresetuj play wizard — to udělá confirmPlay
+  document.getElementById('tbtn-a') && (document.getElementById('tbtn-a').className = 'team-btn' + (newPoss==='A'?' active':''));
+  document.getElementById('tbtn-b') && (document.getElementById('tbtn-b').className = 'team-btn' + (newPoss==='B'?' active':''));
+  document.getElementById('ball-ind-a').style.display = newPoss==='A' ? 'inline' : 'none';
+  document.getElementById('ball-ind-b').style.display = newPoss==='B' ? 'inline' : 'none';
+  document.getElementById('score-team-a').className = 'team-score clickable' + (newPoss==='A'?' active':'');
+  document.getElementById('score-team-b').className = 'team-score clickable' + (newPoss==='B'?' active':'');
+  document.getElementById('offense-label').textContent = state.teams[newPoss].name + ' · NA ÚTOKU';
 }
 
 function touchdownScored() {
@@ -1160,6 +1186,7 @@ function touchdownScored() {
   state.currentDrive = { team: state.possession === 'A' ? 'B' : 'A', plays: 0 };
   // Reset XP wizard state
   xpSel = {};
+  // Ball stays at 50 until XP type selected — renderXPWizard will set it
   renderXPWizard();
   updateFieldDisplay();
 }
@@ -1230,6 +1257,12 @@ function renderXPWizard() {
 
 function xpWizardSelect(key, val) {
   xpSel[key] = val;
+  // Nastavit pozici míče dle IFAF: 1PT z 45yd čáry (5yd od TD), 2PT z 40yd čáry (10yd od TD)
+  if (key === 'xpType') {
+    if (val === '1PT – z 5yd')  state.ball = 45; // 5yd od endzone soupeře
+    if (val === '2PT – z 10yd') state.ball = 40; // 10yd od endzone soupeře
+    updateFieldDisplay();
+  }
   renderXPWizard();
 }
 
@@ -1354,6 +1387,8 @@ function renderSteps() {
     } else if (sel.passResult === 'INT' || sel.passResult === 'INT-TD') {
       if (hasDef)
         steps.push({ key:'intDb', label:`DB zachytil (${defTeam.name})`, options: dbs.length ? dbs.map(p=>p.name) : defAll.map(p=>p.name) });
+      if (sel.passResult === 'INT' && (sel.intDb !== undefined || !hasDef))
+        steps.push({ key:'intReturnYds', label:'Návrat INT (yardy od vlastní endzone)', type:'yard', vals:[5,10,15,20,25,30,35,40,45] });
     }
   } else if (currentPlay === 'sack') {
     steps = [
@@ -1482,6 +1517,9 @@ function addStep() {} // legacy stub
 function addYardStep() {} // legacy stub
 function addConfirm() {} // legacy stub
 
+const DEAD_BALL_PENALTIES = ['False Start', 'Delay of Game', 'Offside'];
+const AUTO_FIRST_DOWN_PENALTIES = ['Pass Interference (DEF)', 'Roughing the Passer', 'Face Mask', 'Unnecessary Roughness', 'Illegal Contact', 'Illegal Blitz'];
+
 // ═══════════════ CONFIRM PLAY ═══════════════
 function confirmPlay() {
   const snap = JSON.parse(JSON.stringify(state));
@@ -1525,13 +1563,25 @@ function confirmPlay() {
     } else if (sel.passResult==='Nechyceno') {
       desc=`${sel.qb} → ${sel.wr} nechyceno${defSuffix(sel.defType,sel.defPlayer)}${playNameSuffix}`;
       state.currentDrive.plays++;
-      state.down++; if(state.down>4) flipPossession('downs');
+      state.down++;
+      if(state.down>4) flipPossession('downs');
       badge='pass';
     } else if (sel.passResult==='INT') {
-      desc=`${sel.qb} INT — zachytil ${sel.intDb} (${defName})`;
+      desc=`${sel.qb} INT — zachytil ${sel.intDb||'?'} (${defName}), návrat na ${sel.intReturnYds||5} yd`;
       state.currentDrive.plays++;
-      flipPossession('turnover');
-      badge='pass';
+      const intReturn = sel.intReturnYds || 5;
+      closeDrive('turnover');
+      const newPoss = state.possession === 'A' ? 'B' : 'A';
+      state.possession = newPoss;
+      state.ball = Math.min(intReturn, 49);
+      state.down = 1;
+      state.firstDownAt = 25;
+      state.currentDrive = { team: newPoss, plays: 0 };
+      state.playLog.unshift({teamName, downStr, badge:'pass', desc, snap});
+      renderLog();
+      resetPlay();
+      updateFieldDisplay();
+      return;
     } else if (sel.passResult==='INT-TD') {
       desc=`${sel.qb} INT-TD — ${sel.intDb} (${defName}) vrátil na TD!`;
       state.currentDrive.plays++;
@@ -1549,20 +1599,40 @@ function confirmPlay() {
     yds=sel.sackYds??-5;
     const def=sel.sackDef&&sel.sackDef!=='—'?` · ${sel.sackDef}`:'';
     desc=`${sel.sackQb} sack ${yds} yd${def}${playNameSuffix}`;
-    state.currentDrive.plays++;
-    advanceBall(yds); state.down++; if(state.down>4) flipPossession('downs'); badge='sack';
+    // advanceBall already increments down — don't do it again
+    advanceBall(yds); badge='sack';
   } else if (currentPlay==='penalty') {
     yds=sel.penYds??0;
     const pl=sel.penPlayer==='—'?'':` (${sel.penPlayer})`;
     desc=`Penalty: ${sel.penType}${pl}, ${yds>=0?'+':''}${yds} yd`;
-    advanceBall(yds); badge='penalty';
+    const isDead = DEAD_BALL_PENALTIES.includes(sel.penType);
+    const isAutoFirst = AUTO_FIRST_DOWN_PENALTIES.includes(sel.penType) && yds > 0;
+    // Posun míče
+    state.ball = Math.max(0, Math.min(50, state.ball + yds));
+    if (isAutoFirst) {
+      // Automatický 1st down pro útočící tým
+      state.down = 1;
+      state.firstDownAt = 25;
+    } else if (isDead) {
+      // Dead ball — down se opakuje, jen posun yardů
+      // down zůstává stejný
+    } else {
+      // Live ball — normální posun, down se počítá
+      if (state.ball >= state.firstDownAt) {
+        state.down = 1;
+        state.firstDownAt = 25;
+      }
+      // jinak down zůstává (penalty replay nebo posun bez ztráty downu)
+    }
+    badge='penalty';
   } else if (currentPlay==='safety') {
     const def=sel.safetyDef&&sel.safetyDef!=='—'?` · ${sel.safetyDef}`:'';
     desc=`Safety — ${sel.safetyQb} v endzóně${def}`;
     state.teams[state.possession==='A'?'B':'A'].score+=2;
     state.currentDrive.plays++;
-    closeDrive('turnover');
-    flipPossession('turnover'); state.ball=5; state.down=1; state.firstDownAt=25; badge='safety';
+    // flipPossession already calls closeDrive — don't call it separately
+    flipPossession('turnover');
+    state.ball=5; state.down=1; state.firstDownAt=25; badge='safety';
   } else if (currentPlay==='td') {
     desc=`TOUCHDOWN — ${sel.tdPlayer}`;
     state.playLog.unshift({teamName,downStr,badge:'td',desc,snap});
@@ -2228,8 +2298,9 @@ function startSecondHalf() {
 // ═══════════════ NOVÝ ZÁPAS ═══════════════
 function newMatch() {
   if (!confirm('Uložit zápas do Google Sheets a začít nový?')) return;
-  saveMatchToSheets(() => {
-    // Reset game state, keep players & playbook
+
+  // Reset ihned — uložení jede na pozadí
+  const resetGame = () => {
     state.possession = 'A';
     state.ball = 5; state.down = 1; state.firstDownAt = 25;
     state.teams.A.score = 0; state.teams.B.score = 0;
@@ -2240,8 +2311,11 @@ function newMatch() {
     currentHalf = 1;
     resetPlay(); renderLog(); updateFieldDisplay();
     closeStats();
-    showToast('Nový zápas zahájen ✓');
-  });
+  };
+
+  resetGame();
+  showToast('Nový zápas zahájen — ukládám do Sheets...');
+  saveMatchToSheets(() => {});
 }
 
 function newMatchWithoutSave() {
@@ -2294,24 +2368,41 @@ function saveMatchToSheets(onDone) {
     teamAPlayers: teamAPlayerNames
   };
 
+  showToast('Ukládám do Sheets...');
+
+  // Use no-cors fetch with GET + encoded data (Apps Script doesn't support POST from browser)
+  const encoded = encodeURIComponent(JSON.stringify(payload));
   const cbName = 'cb_' + Date.now();
-  window[cbName] = function(res) {
+
+  // Timeout — if no response in 10s, proceed anyway
+  const timeout = setTimeout(() => {
     delete window[cbName];
-    document.getElementById('jsonp-' + cbName)?.remove();
-    if (res.status === 'ok') {
+    showToast('⚠ Sheets neodpověděl — zkontroluj tabulku', 'red');
+    if (onDone) onDone();
+  }, 10000);
+
+  window[cbName] = function(res) {
+    clearTimeout(timeout);
+    delete window[cbName];
+    const el = document.getElementById('jsonp-' + cbName);
+    if (el) el.remove();
+    if (res && res.status === 'ok') {
       showToast('Zápas uložen do Sheets ✓');
-      if (onDone) onDone();
     } else {
-      showToast('Chyba ukládání: ' + (res.message || '?'), 'red');
-      if (onDone) onDone();
+      showToast('Chyba: ' + (res && res.message ? res.message : 'neznámá'), 'red');
     }
+    if (onDone) onDone();
   };
 
-  const encoded = encodeURIComponent(JSON.stringify(payload));
-  const script  = document.createElement('script');
+  const script = document.createElement('script');
   script.id = 'jsonp-' + cbName;
   script.src = `${url}?action=save&callback=${cbName}&data=${encoded}`;
-  script.onerror = () => { showToast('Chyba připojení ke Sheets', 'red'); if (onDone) onDone(); };
+  script.onerror = () => {
+    clearTimeout(timeout);
+    delete window[cbName];
+    showToast('Chyba připojení ke Sheets', 'red');
+    if (onDone) onDone();
+  };
   document.body.appendChild(script);
 }
 

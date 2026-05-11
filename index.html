@@ -2357,53 +2357,39 @@ function saveMatchToSheets(onDone) {
 
   const teamAPlayerNames = state.teams.A.players.map(p => p.name);
   const payload = {
-    team:     getSheetsTeamName(),
-    opponent: state.teams.B.name,
-    date:     new Date().toLocaleDateString('cs-CZ'),
-    half:     currentHalf,
-    ourScore: state.teams.A.score,
-    oppScore: state.teams.B.score,
-    drives:   state.drives,
-    playLog:  state.playLog,
-    teamAPlayers: teamAPlayerNames
+    action:   'save',
+    data: {
+      team:     getSheetsTeamName(),
+      opponent: state.teams.B.name,
+      date:     new Date().toLocaleDateString('cs-CZ'),
+      half:     currentHalf,
+      ourScore: state.teams.A.score,
+      oppScore: state.teams.B.score,
+      drives:   state.drives,
+      playLog:  state.playLog,
+      teamAPlayers: teamAPlayerNames
+    }
   };
 
-  showToast('Ukládám do Sheets...');
-
-  // Use no-cors fetch with GET + encoded data (Apps Script doesn't support POST from browser)
-  const encoded = encodeURIComponent(JSON.stringify(payload));
-  const cbName = 'cb_' + Date.now();
-
-  // Timeout — if no response in 10s, proceed anyway
-  const timeout = setTimeout(() => {
-    delete window[cbName];
-    showToast('⚠ Sheets neodpověděl — zkontroluj tabulku', 'red');
-    if (onDone) onDone();
-  }, 10000);
-
-  window[cbName] = function(res) {
-    clearTimeout(timeout);
-    delete window[cbName];
-    const el = document.getElementById('jsonp-' + cbName);
-    if (el) el.remove();
-    if (res && res.status === 'ok') {
+  fetch(url, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    headers: { 'Content-Type': 'text/plain' } // text/plain kvůli CORS na Apps Script
+  })
+  .then(r => r.json())
+  .then(res => {
+    if (res.status === 'ok') {
       showToast('Zápas uložen do Sheets ✓');
     } else {
-      showToast('Chyba: ' + (res && res.message ? res.message : 'neznámá'), 'red');
+      showToast('Chyba: ' + (res.message || '?'), 'red');
     }
     if (onDone) onDone();
-  };
-
-  const script = document.createElement('script');
-  script.id = 'jsonp-' + cbName;
-  script.src = `${url}?action=save&callback=${cbName}&data=${encoded}`;
-  script.onerror = () => {
-    clearTimeout(timeout);
-    delete window[cbName];
+  })
+  .catch(err => {
     showToast('Chyba připojení ke Sheets', 'red');
+    console.error(err);
     if (onDone) onDone();
-  };
-  document.body.appendChild(script);
+  });
 }
 
 // ═══════════════ TOAST ═══════════════

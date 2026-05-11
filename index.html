@@ -2347,6 +2347,127 @@ function getSheetsTeamName() {
   } catch(e) { return state.teams.A.name; }
 }
 
+function buildMatchPayload() {
+  const teamName = getSheetsTeamName();
+  const plays = state.playLog;
+
+  // Yardy
+  let passYds = 0, rushYds = 0;
+  plays.forEach(p => {
+    if (['pass','pass_td'].includes(p.badge)) { const m = p.desc && p.desc.match(/\+(\d+) yd/); if(m) passYds += parseInt(m[1]); }
+    if (['run','run_td'].includes(p.badge))   { const m = p.desc && p.desc.match(/([+-]?\d+) yd/); if(m) rushYds += parseInt(m[1]); }
+  });
+
+  // Drives
+  const offDrives = state.drives.filter(d => d.team === 'A');
+  const defDrives = state.drives.filter(d => d.team !== 'A');
+  const offTD    = offDrives.filter(d => d.result === 'td').length;
+  const defStops = defDrives.filter(d => d.result !== 'td').length;
+  const xp1att   = offDrives.filter(d => d.xpAttempted === 1).length;
+  const xp1ok    = offDrives.filter(d => d.xpAttempted === 1 && d.xpScored === 1).length;
+  const xp2att   = offDrives.filter(d => d.xpAttempted === 2).length;
+  const xp2ok    = offDrives.filter(d => d.xpAttempted === 2 && d.xpScored === 2).length;
+
+  // Fauly
+  const pens = plays.filter(p => p.badge === 'penalty');
+  let penYds = 0;
+  pens.forEach(p => { const m = p.desc && p.desc.match(/([+-]?\d+) yd/); if(m) penYds += Math.abs(parseInt(m[1])); });
+
+  // QB stats
+  const qbMap = {};
+  plays.forEach(p => {
+    if (!['pass','pass_td'].includes(p.badge)) return;
+    const qb = p.qb || (p.desc && p.desc.match(/^(.+?) →/)?.[1]);
+    if (!qb) return;
+    if (!qbMap[qb]) qbMap[qb] = {att:0,comp:0,yds:0,td:0,int:0,sack:0};
+    qbMap[qb].att++;
+    if (p.desc && p.desc.includes('+') && p.desc.includes('→')) {
+      qbMap[qb].comp++;
+      const m = p.desc.match(/\+(\d+) yd/); if(m) qbMap[qb].yds += parseInt(m[1]);
+    }
+    if (p.isTD) qbMap[qb].td++;
+    if (p.desc && p.desc.includes('INT')) qbMap[qb].int++;
+  });
+  plays.forEach(p => {
+    if (p.badge !== 'sack') return;
+    const m = p.desc && p.desc.match(/^(.+?) sack/);
+    if (!m) return;
+    if (!qbMap[m[1]]) qbMap[m[1]] = {att:0,comp:0,yds:0,td:0,int:0,sack:0};
+    qbMap[m[1]].sack++;
+  });
+
+  // WR stats
+  const wrMap = {};
+  plays.forEach(p => {
+    if (!['pass','pass_td'].includes(p.badge)) return;
+    const wr = p.wr || (p.desc && p.desc.match(/→ (.+?)(?:\s+\+|\s+nechyceno)/)?.[1]);
+    if (!wr) return;
+    if (!wrMap[wr]) wrMap[wr] = {targets:0,rec:0,yds:0,td:0,xp:0,pts:0};
+    wrMap[wr].targets++;
+    if (p.desc && p.desc.includes('+') && !p.desc.includes('nechyceno')) {
+      wrMap[wr].rec++;
+      const m = p.desc.match(/\+(\d+) yd/); if(m) wrMap[wr].yds += parseInt(m[1]);
+    }
+    if (p.isTD) { wrMap[wr].td++; wrMap[wr].pts += 6; }
+  });
+  plays.forEach(p => {
+    if (!['xp1','xp2'].includes(p.badge)) return;
+    const m = p.desc && p.desc.match(/→ (.+?)(?:\s·|\s✓|\s✗|$)/);
+    if (!m) return;
+    const wr = m[1].trim();
+    if (!wrMap[wr]) wrMap[wr] = {targets:0,rec:0,yds:0,td:0,xp:0,pts:0};
+    wrMap[wr].xp++;
+    wrMap[wr].pts += p.badge === 'xp1' ? 1 : 2;
+  });
+
+  // DB stats
+  const dbMap = {};
+  const teamANames = state.teams.A.players.map(p => p.name);
+  plays.forEach(p => {
+    if (!['run','run_td','pass','pass_td'].includes(p.badge)) return;
+    const defM = p.desc && p.desc.match(/· ([^·\[\n]+?)(?:\s*\[|$)/);
+    if (!defM) return;
+    const def = defM[1].trim();
+    if (!teamANames.includes(def)) return;
+    if (!dbMap[def]) dbMap[def] = {flagPull:0,sack:0,brkup:0,int:0};
+    if (p.desc.includes('Flag Pull')) dbMap[def].flagPull++;
+    if (p.desc.includes('Stažený balon')) dbMap[def].brkup++;
+  });
+  plays.forEach(p => {
+    if (p.badge !== 'sack') return;
+    const m = p.desc && p.desc.match(/· (.+?)(?:\s*\[|$)/);
+    if (!m) return;
+    const def = m[1].trim();
+    if (!teamANames.includes(def)) return;
+    if (!dbMap[def]) dbMap[def] = {flagPull:0,sack:0,brkup:0,int:0};
+    dbMap[def].sack++;
+  });
+  plays.forEach(p => {
+    if (!p.desc || !p.desc.includes('INT')) return;
+    const m = p.desc.match(/zachytil (.+?)\s*\(/);
+    if (!m) return;
+    const def = m[1].trim();
+    if (!teamANames.includes(def)) return;
+    if (!dbMap[def]) dbMap[def] = {flagPull:0,sack:0,brkup:0,int:0};
+    dbMap[def].int++;
+  });
+
+  return {
+    team:     teamName,
+    opponent: state.teams.B.name,
+    date:     new Date().toLocaleDateString('cs-CZ'),
+    ourScore: state.teams.A.score,
+    oppScore: state.teams.B.score,
+    passYds, rushYds,
+    offDrives: offDrives.length, offTD,
+    defDrives: defDrives.length, defStops,
+    xp1att, xp1ok, xp2att, xp2ok,
+    penCount: pens.length, penYds,
+    qbMap, wrMap, dbMap,
+    teamAPlayers: teamANames
+  };
+}
+
 function saveMatchToSheets(onDone) {
   const url = getScriptUrl();
   if (!url) {
@@ -2355,41 +2476,38 @@ function saveMatchToSheets(onDone) {
     return;
   }
 
-  const teamAPlayerNames = state.teams.A.players.map(p => p.name);
-  const payload = {
-    action:   'save',
-    data: {
-      team:     getSheetsTeamName(),
-      opponent: state.teams.B.name,
-      date:     new Date().toLocaleDateString('cs-CZ'),
-      half:     currentHalf,
-      ourScore: state.teams.A.score,
-      oppScore: state.teams.B.score,
-      drives:   state.drives,
-      playLog:  state.playLog,
-      teamAPlayers: teamAPlayerNames
-    }
-  };
+  const payload = buildMatchPayload();
+  const encoded = encodeURIComponent(JSON.stringify(payload));
+  const cbName  = 'cb_' + Date.now();
 
-  fetch(url, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-    headers: { 'Content-Type': 'text/plain' } // text/plain kvůli CORS na Apps Script
-  })
-  .then(r => r.json())
-  .then(res => {
-    if (res.status === 'ok') {
+  const timeout = setTimeout(() => {
+    delete window[cbName];
+    showToast('⚠ Sheets neodpověděl', 'red');
+    if (onDone) onDone();
+  }, 15000);
+
+  window[cbName] = function(res) {
+    clearTimeout(timeout);
+    delete window[cbName];
+    document.getElementById('jsonp-' + cbName)?.remove();
+    if (res && res.status === 'ok') {
       showToast('Zápas uložen do Sheets ✓');
     } else {
-      showToast('Chyba: ' + (res.message || '?'), 'red');
+      showToast('Chyba: ' + (res && res.message ? res.message : '?'), 'red');
     }
     if (onDone) onDone();
-  })
-  .catch(err => {
-    showToast('Chyba připojení ke Sheets', 'red');
-    console.error(err);
+  };
+
+  const script = document.createElement('script');
+  script.id = 'jsonp-' + cbName;
+  script.src = `${url}?action=save&callback=${cbName}&data=${encoded}`;
+  script.onerror = () => {
+    clearTimeout(timeout);
+    delete window[cbName];
+    showToast('Chyba připojení', 'red');
     if (onDone) onDone();
-  });
+  };
+  document.body.appendChild(script);
 }
 
 // ═══════════════ TOAST ═══════════════

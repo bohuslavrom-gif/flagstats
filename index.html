@@ -2501,6 +2501,9 @@ function saveMatchToSheets(onDone) {
   const script = document.createElement('script');
   script.id = 'jsonp-' + cbName;
   script.src = `${url}?action=save&callback=${cbName}&data=${encoded}`;
+  console.log('FF Stats — posílám data na:', url);
+  console.log('FF Stats — payload:', payload);
+  console.log('FF Stats — encoded délka:', encoded.length, 'znaků');
   script.onerror = () => {
     clearTimeout(timeout);
     delete window[cbName];

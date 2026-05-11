@@ -2507,24 +2507,43 @@ function saveMatchToSheets(onDone) {
   }
 
   const payload = buildMatchPayload();
-  const encoded = encodeURIComponent(JSON.stringify(payload));
-  const fullUrl = `${url}?action=save&data=${encoded}`;
 
-  console.log('FF Stats — posílám data na:', url);
-  console.log('FF Stats — payload:', payload);
-  console.log('FF Stats — encoded délka:', encoded.length, 'znaků');
+  function sendJSONP(data, onSuccess, onError) {
+    const cbName = 'sendCb_' + Date.now();
+    const sc = document.createElement('script');
+    const tm = setTimeout(() => {
+      delete window[cbName];
+      if (sc.parentNode) sc.parentNode.removeChild(sc);
+      onError('Timeout');
+    }, 20000);
+    window[cbName] = function(resp) {
+      clearTimeout(tm);
+      delete window[cbName];
+      if (sc.parentNode) sc.parentNode.removeChild(sc);
+      if (resp && resp.status === 'ok') onSuccess();
+      else onError(resp ? resp.message : 'Neznámá chyba');
+    };
+    sc.onerror = function() {
+      clearTimeout(tm);
+      delete window[cbName];
+      if (sc.parentNode) sc.parentNode.removeChild(sc);
+      onError('Script error');
+    };
+    sc.src = url + '?callback=' + cbName + '&data=' + encodeURIComponent(JSON.stringify(data));
+    document.head.appendChild(sc);
+  }
 
-  // no-cors fetch — nepřečteme odpověď ale data se uloží
-  fetch(fullUrl, { method: 'GET', mode: 'no-cors' })
-    .then(() => {
+  sendJSONP(payload,
+    function() {
       showToast('Zápas uložen do Sheets ✓');
       if (onDone) onDone();
-    })
-    .catch(err => {
-      console.error('Sheets error:', err);
-      showToast('Chyba připojení ke Sheets', 'red');
+    },
+    function(err) {
+      console.error('Sheets chyba:', err);
+      showToast('Chyba Sheets: ' + err, 'red');
       if (onDone) onDone();
-    });
+    }
+  );
 }
 
 // ═══════════════ TOAST ═══════════════
